@@ -8,14 +8,14 @@ import java.util.function.Supplier;
 public class ThreadPoolImpl implements ThreadPool {
     private final int numThreads;
     private final Queue<PackagedTask> tasksQueue = new ArrayDeque<>();
-    private Worker[] workers;
+    private Thread[] workers;
 
     public ThreadPoolImpl(int numThreads) {
         this.numThreads = numThreads;
 
-        workers = new Worker[numThreads];
+        workers = new Thread[numThreads];
         for (int i = 0; i < numThreads; i++) {
-            workers[i] = new Worker();
+            workers[i] = new Thread(new Worker());
             workers[i].start();
         }
     }
@@ -33,7 +33,7 @@ public class ThreadPoolImpl implements ThreadPool {
 
     @Override
     public void shutdown() {
-        for (Worker worker: workers) {
+        for (Thread worker: workers) {
             worker.interrupt();
         }
     }
@@ -52,10 +52,10 @@ public class ThreadPoolImpl implements ThreadPool {
         }
     }
 
-    private class Worker extends Thread {
+    private class Worker implements Runnable {
         @Override
         public void run() {
-            while (!isInterrupted()) {
+            while (!Thread.interrupted()) {
                 PackagedTask task;
 
                 try {
@@ -92,7 +92,7 @@ public class ThreadPoolImpl implements ThreadPool {
     }
 
     private class LightFutureImpl<T> implements LightFuture<T> {
-        private Boolean isReady = false;
+        private boolean isReady = false;
         private T result;
         private boolean wasThrown = false;
 
@@ -114,7 +114,7 @@ public class ThreadPoolImpl implements ThreadPool {
             return submit(() -> {
                 try {
                     return function.apply(get());
-                } catch (LightExecutionException | InterruptedException e) {
+                } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             });
