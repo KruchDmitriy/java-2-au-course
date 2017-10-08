@@ -1,6 +1,7 @@
 package ru.spbau.mit;
 
 import java.util.ArrayDeque;
+import java.util.Iterator;
 import java.util.Queue;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -8,7 +9,8 @@ import java.util.function.Supplier;
 public class ThreadPoolImpl implements ThreadPool {
     private final int numThreads;
     private final Queue<PackagedTask> tasksQueue = new ArrayDeque<>();
-    private Thread[] workers;
+    private final Thread[] workers;
+    private volatile boolean isShutdown;
 
     public ThreadPoolImpl(int numThreads) {
         this.numThreads = numThreads;
@@ -21,7 +23,11 @@ public class ThreadPoolImpl implements ThreadPool {
     }
 
     @Override
-    public <T> LightFuture<T> submit(Supplier<T> task) {
+    public <T> LightFuture<T> submit(Supplier<T> task) throws RejectedExecutionException {
+        if (isShutdown) {
+            throw new RejectedExecutionException();
+        }
+
         synchronized (tasksQueue) {
             PackagedTask<T> packagedTask = new PackagedTask<>(task);
             tasksQueue.add(packagedTask);
@@ -33,6 +39,24 @@ public class ThreadPoolImpl implements ThreadPool {
 
     @Override
     public void shutdown() {
+        isShutdown = true;
+
+        LightFuture[] futures;
+        synchronized (tasksQueue) {
+            futures = new LightFuture[tasksQueue.size()];
+
+            Iterator<PackagedTask> iterator = tasksQueue.iterator();
+            for (int i = 0; iterator.hasNext(); i++) {
+                futures[i] = iterator.next().getFuture();
+            }
+        }
+
+        for (LightFuture future : futures) {
+            try {
+                future.get();
+            } catch (LightExecutionException | InterruptedException ignored) {}
+        }
+
         for (Thread worker: workers) {
             worker.interrupt();
         }
@@ -44,7 +68,7 @@ public class ThreadPoolImpl implements ThreadPool {
 
     private PackagedTask getTask() throws InterruptedException {
         synchronized (tasksQueue) {
-            while (tasksQueue.size() == 0) {
+            while (tasksQueue.isEmpty()) {
                 tasksQueue.wait();
             }
 
@@ -55,9 +79,8 @@ public class ThreadPoolImpl implements ThreadPool {
     private class Worker implements Runnable {
         @Override
         public void run() {
+            PackagedTask task;
             while (!Thread.interrupted()) {
-                PackagedTask task;
-
                 try {
                     task = getTask();
                 } catch (InterruptedException e) {
@@ -65,19 +88,28 @@ public class ThreadPoolImpl implements ThreadPool {
                 }
 
                 task.execute();
+
+                final LightFutureImpl future = task.getFuture();
+                synchronized (future) {
+                    task = future.getNextTask();
+
+                    if (task != null) {
+                        task.execute();
+                    }
+                }
             }
         }
     }
 
     private class PackagedTask<T> {
         private final Supplier<T> task;
-        private LightFutureImpl<T> lightFuture = new LightFutureImpl<>();
+        private final LightFutureImpl<T> lightFuture = new LightFutureImpl<>();
 
         PackagedTask(Supplier<T> task) {
             this.task = task;
         }
 
-        LightFuture<T> getFuture() {
+        LightFutureImpl<T> getFuture() {
             return lightFuture;
         }
 
@@ -86,15 +118,16 @@ public class ThreadPoolImpl implements ThreadPool {
                 T result = task.get();
                 lightFuture.setResult(result);
             } catch (Exception e) {
-                lightFuture.setWasThrown();
+                lightFuture.setWasThrown(e);
             }
         }
     }
 
     private class LightFutureImpl<T> implements LightFuture<T> {
-        private boolean isReady = false;
+        private boolean isReady;
         private T result;
-        private boolean wasThrown = false;
+        private Throwable wasThrown;
+        private PackagedTask nextTask;
 
         @Override
         public synchronized T get() throws LightExecutionException, InterruptedException {
@@ -102,22 +135,31 @@ public class ThreadPoolImpl implements ThreadPool {
                 wait();
             }
 
-            if (wasThrown) {
-                throw new LightExecutionException();
+            if (wasThrown != null) {
+                throw new LightExecutionException(wasThrown);
             }
 
             return result;
         }
 
         @Override
-        public <R> LightFuture<R> thenApply(Function<T, R> function) {
-            return submit(() -> {
+        public synchronized <R> LightFuture<R> thenApply(Function<T, R> function)
+                throws RejectedExecutionException {
+            Supplier<R> supplier = () -> {
                 try {
                     return function.apply(get());
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
-            });
+            };
+
+            if (isReady) {
+                return submit(supplier);
+            }
+
+            nextTask = new PackagedTask<>(supplier);
+
+            return nextTask.getFuture();
         }
 
         @Override
@@ -128,13 +170,17 @@ public class ThreadPoolImpl implements ThreadPool {
         private synchronized void setResult(T result) {
             this.result = result;
             isReady = true;
-            notify();
+            notifyAll();
         }
 
-        private synchronized void setWasThrown() {
-            wasThrown = true;
+        private synchronized void setWasThrown(Throwable wasThrown) {
+            this.wasThrown = wasThrown;
             isReady = true;
-            notify();
+            notifyAll();
+        }
+
+        PackagedTask getNextTask() {
+            return nextTask;
         }
     }
 }

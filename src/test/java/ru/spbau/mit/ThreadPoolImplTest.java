@@ -25,7 +25,9 @@ public class ThreadPoolImplTest {
     }
 
     @Test
-    public void testNumThreads() throws LightExecutionException, InterruptedException {
+    public void testNumThreads() throws LightExecutionException,
+            InterruptedException,
+            RejectedExecutionException {
         final Integer[] counter = {0};
 
         Supplier<Void> supplier = () -> {
@@ -57,17 +59,26 @@ public class ThreadPoolImplTest {
         }
     }
 
-    @Test(expected = LightExecutionException.class)
-    public void testThrow() throws LightExecutionException, InterruptedException {
+    @Test
+    public void testThrow() throws LightExecutionException,
+            InterruptedException,
+            RejectedExecutionException {
+        final RuntimeException cause = new RuntimeException();
         LightFuture<Void> future = threadPool.submit(() -> {
-            throw new RuntimeException();
+            throw cause;
         });
 
-        future.get();
+        try {
+            future.get();
+        } catch (LightExecutionException e) {
+            assertEquals(cause, e.getCause());
+        }
     }
 
     @Test
-    public void testTaskConsistency() throws LightExecutionException, InterruptedException {
+    public void testTaskConsistency() throws LightExecutionException,
+            InterruptedException,
+            RejectedExecutionException {
         LightFuture[] futures = new LightFuture[NUM_THREADS];
 
         for (int i = 0; i < futures.length; i++) {
@@ -81,7 +92,9 @@ public class ThreadPoolImplTest {
     }
 
     @Test
-    public void testThenApply() throws LightExecutionException, InterruptedException {
+    public void testThenApply() throws LightExecutionException,
+            InterruptedException,
+            RejectedExecutionException {
         final int value = 10;
 
         Integer actual = threadPool.submit(() -> value)
@@ -92,14 +105,18 @@ public class ThreadPoolImplTest {
     }
 
     @Test(expected = LightExecutionException.class)
-    public void testThenApplyException() throws LightExecutionException, InterruptedException {
+    public void testThenApplyException() throws LightExecutionException,
+            InterruptedException,
+            RejectedExecutionException {
         threadPool.submit((Supplier<Integer>) () -> {
             throw new RuntimeException();
         }).thenApply(x -> x + 1).get();
     }
 
     @Test
-    public void testIsReady() throws LightExecutionException, InterruptedException {
+    public void testIsReady() throws LightExecutionException,
+            InterruptedException,
+            RejectedExecutionException {
         final boolean[] testReady = {false};
         Object syncObject = new Object();
 
@@ -130,7 +147,8 @@ public class ThreadPoolImplTest {
     }
 
     @Test
-    public void testQueueConsistency() throws LightExecutionException, InterruptedException {
+    public void testQueueConsistency() throws LightExecutionException,
+            InterruptedException {
         Thread[] producers = new Thread[NUM_THREADS];
         final int numTasks = 100;
         LightFuture[] futures = new LightFuture[NUM_THREADS * numTasks];
@@ -140,8 +158,12 @@ public class ThreadPoolImplTest {
             producers[i] = new Thread(() -> {
                 for (int j = 0; j < numTasks; j++) {
                     final int finalJ = j;
-                    futures[finalI * numTasks + j] =
-                            threadPool.submit(() -> finalI * numTasks + finalJ);
+                    try {
+                        futures[finalI * numTasks + j] =
+                                threadPool.submit(() -> finalI * numTasks + finalJ);
+                    } catch (RejectedExecutionException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
             });
             producers[i].start();
