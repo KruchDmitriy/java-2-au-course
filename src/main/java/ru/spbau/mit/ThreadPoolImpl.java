@@ -54,7 +54,7 @@ public class ThreadPoolImpl implements ThreadPool {
         for (LightFuture future : futures) {
             try {
                 future.get();
-            } catch (LightExecutionException | InterruptedException ignored) {}
+            } catch (LightExecutionException | InterruptedException ignored) { }
         }
 
         for (Thread worker: workers) {
@@ -62,8 +62,14 @@ public class ThreadPoolImpl implements ThreadPool {
         }
     }
 
+    @Override
     public int getNumThreads() {
         return numThreads;
+    }
+
+    @Override
+    public boolean isShutdown() {
+        return isShutdown;
     }
 
     private PackagedTask getTask() throws InterruptedException {
@@ -79,12 +85,14 @@ public class ThreadPoolImpl implements ThreadPool {
     private class Worker implements Runnable {
         @Override
         public void run() {
-            PackagedTask task;
+            PackagedTask task = null;
             while (!Thread.interrupted()) {
-                try {
-                    task = getTask();
-                } catch (InterruptedException e) {
-                    return;
+                if (task == null) {
+                    try {
+                        task = getTask();
+                    } catch (InterruptedException e) {
+                        return;
+                    }
                 }
 
                 task.execute();
@@ -92,10 +100,6 @@ public class ThreadPoolImpl implements ThreadPool {
                 final LightFutureImpl future = task.getFuture();
                 synchronized (future) {
                     task = future.getNextTask();
-
-                    if (task != null) {
-                        task.execute();
-                    }
                 }
             }
         }

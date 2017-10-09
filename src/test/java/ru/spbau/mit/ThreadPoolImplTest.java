@@ -4,6 +4,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Random;
 import java.util.function.Supplier;
 
 import static junit.framework.TestCase.assertTrue;
@@ -57,6 +58,8 @@ public class ThreadPoolImplTest {
         for (LightFuture future: futures) {
             future.get();
         }
+
+        assertEquals(NUM_THREADS, threadPool.getNumThreads());
     }
 
     @Test
@@ -76,7 +79,7 @@ public class ThreadPoolImplTest {
     }
 
     @Test
-    public void testTaskConsistency() throws LightExecutionException,
+    public void testTasksAreNotDroppedOrShuffled() throws LightExecutionException,
             InterruptedException,
             RejectedExecutionException {
         LightFuture[] futures = new LightFuture[NUM_THREADS];
@@ -95,13 +98,15 @@ public class ThreadPoolImplTest {
     public void testThenApply() throws LightExecutionException,
             InterruptedException,
             RejectedExecutionException {
-        final int value = 10;
+        final int value = 1;
+        final int thenApplyCount = 30;
 
-        Integer actual = threadPool.submit(() -> value)
-                .thenApply(a -> a * a)
-                .thenApply(a -> a + a).get();
+        LightFuture<Integer> future = threadPool.submit(() -> value);
+        for (int i = 0; i < thenApplyCount; i++) {
+             future = future.thenApply(a -> a + a);
+        }
 
-        assertEquals(value * value + value * value, actual.intValue());
+        assertEquals(1 << thenApplyCount, future.get().intValue());
     }
 
     @Test(expected = LightExecutionException.class)
@@ -147,7 +152,7 @@ public class ThreadPoolImplTest {
     }
 
     @Test
-    public void testQueueConsistency() throws LightExecutionException,
+    public void testDataRacesOnSubmit() throws LightExecutionException,
             InterruptedException {
         Thread[] producers = new Thread[NUM_THREADS];
         final int numTasks = 100;
@@ -166,15 +171,65 @@ public class ThreadPoolImplTest {
                     }
                 }
             });
-            producers[i].start();
         }
 
-        for (int i = 0; i < NUM_THREADS; i++) {
-            producers[i].join();
+        for (Thread producer : producers) {
+            producer.start();
+        }
+
+        for (Thread producer : producers) {
+            producer.join();
         }
 
         for (int i = 0; i < NUM_THREADS * numTasks; i++) {
             assertEquals(i, futures[i].get());
         }
+    }
+
+    @Test
+    public void testGetFromDifferentThreads() throws RejectedExecutionException,
+            InterruptedException {
+        final int second = 1000;
+        final int numberOfTasks = 50;
+        final Random rng = new Random();
+        final LightFuture[] futures = new LightFuture[NUM_THREADS];
+
+        for (int i = 0; i < numberOfTasks; i++) {
+            final int finalI = i;
+            futures[i] = threadPool.submit(() -> {
+                try {
+                    Thread.sleep(second);
+                } catch (InterruptedException ignored) { }
+
+                return finalI;
+            });
+        }
+
+        Thread[] waiters = new Thread[NUM_THREADS];
+        for (int i = 0; i < NUM_THREADS; i++) {
+            waiters[i] = new Thread(() -> {
+                for (int j = 0; j < numberOfTasks; j++) {
+                    try {
+                        futures[rng.nextInt(numberOfTasks)].get();
+                    } catch (LightExecutionException
+                            | InterruptedException ignored) { }
+                }
+            });
+        }
+
+        for (Thread waiter: waiters) {
+            waiter.start();
+        }
+
+        for (Thread waiter: waiters) {
+            waiter.join();
+        }
+    }
+
+    @Test(expected = RejectedExecutionException.class)
+    public void testShutdown() throws RejectedExecutionException {
+        threadPool.shutdown();
+        assertTrue(threadPool.isShutdown());
+        threadPool.submit(() -> 0);
     }
 }
