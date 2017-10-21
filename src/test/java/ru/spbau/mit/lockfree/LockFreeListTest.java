@@ -3,10 +3,13 @@ package ru.spbau.mit.lockfree;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Random;
 import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.locks.ReentrantLock;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -63,45 +66,44 @@ public class LockFreeListTest {
     }
 
     @Test
-    public void testInsertionMultiThread() throws InterruptedException {
-        final int numThreads = 12;
-        final int numInsertions = 100;
+    public void testInsertDeleteMultiThread() throws InterruptedException {
+        final int numThreads = 8;
+        final int numInsertions = 1000;
 
         final Thread[] threads = new Thread[numThreads];
-        CyclicBarrier barrierAppend = new CyclicBarrier(numThreads);
-        CyclicBarrier barrierContains = new CyclicBarrier(numThreads);
-        CyclicBarrier barrierRemove = new CyclicBarrier(numThreads);
+        final CyclicBarrier barrierStart = new CyclicBarrier(numThreads);
+        final CyclicBarrier barrierAppend = new CyclicBarrier(numThreads);
+        final CyclicBarrier barrierContains = new CyclicBarrier(numThreads);
+        final CyclicBarrier barrierRemove = new CyclicBarrier(numThreads);
 
-        for (int i = 0; i < numThreads; i++) {
+        for (int i = 0; i < threads.length; i++) {
             final int finalI = i;
             threads[i] = new Thread(() -> {
-                for (int j = 0; j < numInsertions; j++) {
-                    list.append(finalI * numInsertions + j);
-                }
-
                 try {
+                    barrierStart.await();
+
+                    for (int j = 0; j < numInsertions; j++) {
+                        list.append(finalI * numInsertions + j);
+                    }
+
                     barrierAppend.await();
-                } catch (InterruptedException | BrokenBarrierException ignored) { }
 
-                for (int j = 0; j < numThreads * numInsertions; j++) {
-                    assertTrue(list.contains(j));
-                }
+                    for (int j = 0; j < numThreads * numInsertions; j++) {
+                        assertTrue(list.contains(j));
+                    }
 
-                try {
                     barrierContains.await();
-                } catch (InterruptedException | BrokenBarrierException ignored) { }
 
-                for (int j = 0; j < numInsertions; j++) {
-                    assertTrue(list.remove(finalI * numInsertions + j));
-                }
+                    for (int j = 0; j < numInsertions; j++) {
+                        assertTrue(list.remove(finalI * numInsertions + j));
+                    }
 
-                try {
                     barrierRemove.await();
-                } catch (InterruptedException | BrokenBarrierException ignored) { }
 
-                for (int j = 0; j < numThreads * numInsertions; j++) {
-                    assertFalse(list.contains(j));
-                }
+                    for (int j = 0; j < numThreads * numInsertions; j++) {
+                        assertFalse(list.remove(j));
+                    }
+                } catch (InterruptedException | BrokenBarrierException ignored) { }
             });
         }
 
@@ -113,12 +115,69 @@ public class LockFreeListTest {
             thread.join();
         }
 
-//        assertTrue(list.isEmpty());
+        assertTrue(list.isEmpty());
+    }
 
-        for (int j = 0; j < numThreads * numInsertions; j++) {
-            if (list.remove(j)) {
-                System.out.println(Math.sin(10.));
-            }
+    @Test
+    public void testConcurrentInsertAndDelete() throws InterruptedException {
+        ConcurrentMap<Integer, Integer> map = new ConcurrentSkipListMap<>();
+
+        final int numThreads = 8;
+        final int numOperations = 10_000;
+        final Random rng = new Random();
+        final int randomBound = 100;
+
+        final Thread[] threads = new Thread[numThreads];
+        final ReentrantLock[] locks = new ReentrantLock[randomBound];
+
+        for (int i = 0; i < randomBound; i++) {
+            map.put(i, 0);
+            locks[i] = new ReentrantLock();
+        }
+
+
+        for (int i = 0; i < numThreads; i++) {
+            threads[i] = new Thread(() -> {
+                for (int j = 0; j < numOperations; j++) {
+                    boolean toInsert = rng.nextBoolean();
+                    final Integer key = rng.nextInt(randomBound);
+
+                    try {
+                        locks[key].lock();
+
+                        final Integer value = map.get(key);
+                        if (toInsert) {
+                            if (value.equals(0)) {
+                                assertFalse(list.contains(key));
+                            } else {
+                                assertTrue(list.contains(key));
+                            }
+
+                            map.put(key, value + 1);
+                            list.append(key);
+                        } else {
+                            if (value.equals(0)) {
+                                assertFalse(list.contains(key));
+                            } else {
+                                assertTrue(list.contains(key));
+
+                                map.put(key, value - 1);
+                                assertTrue(list.remove(key));
+                            }
+                        }
+                    } finally {
+                        locks[key].unlock();
+                    }
+                }
+            });
+        }
+
+        for (Thread thread: threads) {
+            thread.start();
+        }
+
+        for (Thread thread: threads) {
+            thread.join();
         }
     }
 }

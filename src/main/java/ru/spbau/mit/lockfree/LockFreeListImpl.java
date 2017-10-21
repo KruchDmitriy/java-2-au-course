@@ -1,19 +1,23 @@
 package ru.spbau.mit.lockfree;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicMarkableReference;
 
 public class LockFreeListImpl<E> implements LockFreeList<E> {
     private final Node<E> tail = new Node<>(null, null);
     private final Node<E> head = new Node<>(tail, null);
+    private final AtomicInteger size = new AtomicInteger();
 
     @Override
     public void append(E value) {
-        final Node<E> node = new Node<>(tail, value);
-
         while (true) {
-            Node<E> curr = findLast();
+            final Bounds<E> bounds = find(value);
+            final Node<E> pred = bounds.pred;
+            final Node<E> curr = bounds.curr;
 
-            if (curr.next.compareAndSet(tail, node, false, false)) {
+            final Node<E> node = new Node<>(curr, value);
+            if (pred.next.compareAndSet(curr, node, false, false)) {
+                size.incrementAndGet();
                 return;
             }
         }
@@ -22,33 +26,35 @@ public class LockFreeListImpl<E> implements LockFreeList<E> {
     @Override
     public boolean remove(E value) {
         while (true) {
-            Node<E> pred = findBefore(value);
-            Node<E> curr = pred.getNext();
+            final Bounds<E> bounds = find(value);
+            final Node<E> pred = bounds.pred;
+            final Node<E> curr = bounds.curr;
+            final Node<E> succ = curr.getNext();
 
-            if (curr == tail) {
+            if (curr == tail || !curr.value.equals(value)) {
                 return false;
             }
 
-            if (!pred.next.compareAndSet(curr, curr, false, true)) {
+            if (!curr.next.attemptMark(succ, true)) {
                 continue;
             }
 
-            Node<E> succ = curr.getNext();
-            pred.next.compareAndSet(curr, succ, true, false);
+            size.decrementAndGet();
+
+            pred.next.compareAndSet(curr, succ, false, false);
             return true;
         }
     }
 
     @Override
     public boolean contains(E value) {
-        final Node<E> node = findBefore(value).getNext();
-        return ! (node == tail);
+        final Node<E> node = find(value).curr;
+        return ! (node == tail) && node.value.equals(value);
     }
 
     @Override
     public boolean isEmpty() {
-        // FIXME
-        return head.next.compareAndSet(tail, tail, false, false);
+        return size.get() == 0;
     }
 
     private static class Node<E> {
@@ -64,38 +70,59 @@ public class LockFreeListImpl<E> implements LockFreeList<E> {
             return next.getReference();
         }
 
-        boolean nextIsMarked() {
-            return next.isMarked();
+        Node<E> getNext(boolean[] mark) {
+            return next.get(mark);
+        }
+
+        boolean nextIsChanged(Node<E> next) {
+            return this.next.isMarked()
+                    || this.next.getReference() != next;
+        }
+
+        int compare(E value) {
+            return Integer.compare(this.value.hashCode() - value.hashCode(), 0);
         }
     }
 
-    private Node<E> findBefore(E value) {
-        while (true) {
-            Node<E> pred = head;
-            Node<E> curr = pred.getNext();
-            Node<E> succ;
+    private static class Bounds<E> {
+        final Node<E> pred;
+        final Node<E> curr;
 
-            while (true) {
-                succ = curr.getNext();
-                boolean currWasDeleted = pred.nextIsMarked();
+        Bounds(Node<E> pred, Node<E> curr) {
+            this.pred = pred;
+            this.curr = curr;
+        }
+    }
 
-                if (currWasDeleted) {
-                    if (!pred.next.compareAndSet(curr, succ, true, false))
-                        break;
-                } else {
-                    final E curValue = curr.value;
-                    if (curr == tail || curValue.equals(value)) {
-                        return pred;
-                    }
-                }
+    private Bounds<E> find(E value) {
+        boolean[] currWasDeleted = {false};
 
-                pred = curr;
-                curr = succ;
+        Node<E> pred = head;
+        Node<E> curr = pred.getNext();
+        Node<E> succ;
+
+        while (curr != tail && curr.compare(value) >= 0) {
+            succ = curr.getNext(currWasDeleted);
+
+            if (pred.nextIsChanged(curr)
+                || currWasDeleted[0]
+                && !pred.next.compareAndSet(curr, succ, false, false))
+            {
+                pred = head;
+                curr = pred.getNext();
+                continue;
             }
-        }
-    }
 
-    private Node<E> findLast() {
-        return findBefore(null);
+            if (!currWasDeleted[0]) {
+                if (value.equals(curr.value))
+                    return new Bounds<>(pred, curr);
+                else
+                    pred = curr;
+            }
+
+            curr = succ;
+        }
+
+        return new Bounds<>(pred, curr);
     }
 }
