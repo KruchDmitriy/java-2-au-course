@@ -3,17 +3,13 @@ package ru.spbau.mit.threadpool;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import ru.spbau.mit.threadpool.LightExecutionException;
-import ru.spbau.mit.threadpool.LightFuture;
-import ru.spbau.mit.threadpool.RejectedExecutionException;
-import ru.spbau.mit.threadpool.ThreadPoolImpl;
 
 import java.util.Random;
 import java.util.function.Supplier;
 
-import static junit.framework.TestCase.assertTrue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class ThreadPoolImplTest {
     private static final int NUM_THREADS = 1000;

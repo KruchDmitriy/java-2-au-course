@@ -1,4 +1,4 @@
-package ru.spbau.mit;
+package ru.spbau.mit.threadpool;
 
 import java.util.function.Function;
 
