@@ -12,7 +12,7 @@ import java.util.concurrent.Executors;
 import static java.lang.Thread.activeCount;
 
 public class Server {
-    public static final int DEFAULT_PORT = 78905;
+    public static final int DEFAULT_PORT = 57890;
     private final ServerSocket serverSocket;
     private final ExecutorService executorService =
             Executors.newFixedThreadPool(activeCount());
@@ -27,13 +27,14 @@ public class Server {
     }
 
     public void start() throws ServerAlreadyStarted {
-        if (mainThread.isAlive()) {
+        if (mainThread != null && mainThread.isAlive()) {
             throw new ServerAlreadyStarted();
         }
 
         mainThread = new Thread(() -> {
             while (true) {
-                try (Socket clientSocket = serverSocket.accept()) {
+                try {
+                    Socket clientSocket = serverSocket.accept();
                     executorService.submit(new Task(clientSocket));
                 } catch (IOException ignored) {
                     return;
@@ -54,8 +55,16 @@ public class Server {
     }
 
     private static void get(DataOutputStream outputStream, String fileName) throws IOException {
-        byte[] bytes = Files.readAllBytes(Paths.get(fileName));
-        outputStream.writeUTF(Arrays.toString(bytes));
+        final File file = new File(fileName);
+        outputStream.writeLong(file.length());
+
+        try (FileInputStream fileInputStream = new FileInputStream(file)) {
+            byte[] bytes = new byte[256];
+            int readed;
+            while ((readed = fileInputStream.read(bytes)) > 0) {
+                outputStream.write(bytes, 0, readed);
+            }
+        }
     }
 
     private static void list(DataOutputStream outputStream, String fileName) throws IOException {
@@ -69,10 +78,11 @@ public class Server {
 
         outputStream.writeInt(fileNames.length);
         Arrays.stream(fileNames)
-            .forEach(file -> {
+            .forEach(curFileName -> {
                 try {
-                    outputStream.writeUTF(file);
-                    outputStream.writeBoolean(new File(file).isDirectory());
+                    File file = new File(fileName + File.separator + curFileName);
+                    outputStream.writeUTF(file.getCanonicalPath());
+                    outputStream.writeBoolean(file.isDirectory());
                 } catch (IOException e) {
                     wasThrown[0] = e;
                 }
@@ -81,6 +91,10 @@ public class Server {
         if (wasThrown[0] != null) {
             throw wasThrown[0];
         }
+    }
+
+    public boolean isStopped() {
+        return mainThread == null || !mainThread.isAlive();
     }
 
     private class Task implements Runnable {
@@ -92,10 +106,8 @@ public class Server {
 
         @Override
         public void run() {
-            try (DataInputStream inputStream = new DataInputStream(
-                    new BufferedInputStream(socket.getInputStream()));
-                 DataOutputStream outputStream = new DataOutputStream(
-                         new BufferedOutputStream(socket.getOutputStream())))
+            try (DataInputStream inputStream = new DataInputStream(socket.getInputStream());
+                 DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream()))
             {
                 while (true) {
                     switch (Command.createCommand(inputStream.readInt())) {
@@ -109,7 +121,9 @@ public class Server {
                             return;
                     }
                 }
-            } catch (IOException ignored) { }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
     }
 }

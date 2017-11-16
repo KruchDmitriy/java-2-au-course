@@ -4,7 +4,7 @@ import java.io.*;
 import java.net.Socket;
 
 public class Client implements AutoCloseable {
-    public static final String DEFAULT_HOST = "localhost";
+    public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = Server.DEFAULT_PORT;
     private final Socket socket;
     private final DataInputStream inputStream;
@@ -16,11 +16,11 @@ public class Client implements AutoCloseable {
 
     public Client(String host, int port) throws IOException {
         socket = new Socket(host, port);
-        inputStream = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-        outputStream = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+        inputStream = new DataInputStream(socket.getInputStream());
+        outputStream = new DataOutputStream(socket.getOutputStream());
     }
 
-    public DirectoryItem[] executeList(String fileName) throws IOException {
+    public DirectoryItem[] executeList(String fileName) throws IOException, InterruptedException {
         outputStream.writeInt(Command.List.id);
         outputStream.writeUTF(fileName);
 
@@ -40,7 +40,15 @@ public class Client implements AutoCloseable {
         outputStream.writeInt(Command.Get.id);
         outputStream.writeUTF(fileName);
 
-        return inputStream.readUTF();
+        StringBuilder builder = new StringBuilder();
+        long length = inputStream.readLong();
+        byte[] bytes = new byte[256];
+        for (int counter = 0, read; counter < length; counter += read) {
+            read = inputStream.read(bytes);
+            builder.append(new String(bytes, 0, read));
+        }
+
+        return builder.toString();
     }
 
     @Override
@@ -59,6 +67,16 @@ public class Client implements AutoCloseable {
         public DirectoryItem(String fileName, boolean isDirectory) {
             this.fileName = fileName;
             this.isDirectory = isDirectory;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (! (obj instanceof DirectoryItem)) {
+                return false;
+            }
+            DirectoryItem item = (DirectoryItem) obj;
+
+            return fileName.equals(item.fileName) && isDirectory == item.isDirectory;
         }
     }
 }
