@@ -126,7 +126,7 @@ public class Server {
                         Response response = processQuery(query);
                         out.writeObject(response);
                     } catch (IOException e) {
-                        out.writeObject(new ErrorResponse("Error while processing query"));
+                        out.writeObject(new ErrorResponse("Error while processing query", e));
                     }
                 }
             } catch (ClassNotFoundException | IOException e) {

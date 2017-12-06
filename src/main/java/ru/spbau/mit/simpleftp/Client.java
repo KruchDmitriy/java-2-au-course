@@ -57,7 +57,8 @@ public class Client implements AutoCloseable {
 
     private static void handleError(Response response) throws Exception {
         if (response instanceof ErrorResponse) {
-            throw new Exception(((ErrorResponse) response).message);
+            final ErrorResponse errorResponse = (ErrorResponse) response;
+            throw new Exception(errorResponse.message, errorResponse.cause);
         }
     }
 }
