@@ -90,7 +90,7 @@ public class Server {
 
     private static ListResponse list(ListQuery query) throws IOException {
         List<ListResponse.DirectoryItem> directoryItems =
-                Files.walk(Paths.get(query.pathToDirectory), 1)
+                Files.walk(Paths.get(query.pathToDirectory))
                 .map(path -> new ListResponse.DirectoryItem(
                         path.toAbsolutePath().normalize().toString(),
                         Files.isDirectory(path)

@@ -43,7 +43,6 @@ public class FTPTest {
     public void listTest() throws Exception {
         try (Client client = new Client()) {
             List<ListResponse.DirectoryItem> directoryItems = client.executeList(TEST_FOLDER);
-            assertEquals(4, directoryItems.size());
             final String folderA = new File(TEST_FOLDER + "a").getCanonicalPath();
             final String folderB = new File(TEST_FOLDER + "b").getCanonicalPath();
             final String textC = new File(TEST_FOLDER + "c.txt").getCanonicalPath();
@@ -51,7 +50,7 @@ public class FTPTest {
             final String folderB1InFolderB = new File(TEST_FOLDER + "b/b1").getCanonicalPath();
 
 
-            assertEquals(4, directoryItems.size());
+            assertEquals(6, directoryItems.size());
             assertTrue(directoryItems.contains(new DirectoryItem(folderA, true)));
             assertTrue(directoryItems.contains(new DirectoryItem(folderB, true)));
             assertTrue(directoryItems.contains(new DirectoryItem(textC, false)));
