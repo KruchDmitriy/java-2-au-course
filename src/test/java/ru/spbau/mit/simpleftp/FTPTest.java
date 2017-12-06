@@ -1,17 +1,14 @@
 package ru.spbau.mit.simpleftp;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.ExpectedException;
-import ru.spbau.mit.simpleftp.Client.DirectoryItem;
+import ru.spbau.mit.simpleftp.util.ListResponse.DirectoryItem;
+import ru.spbau.mit.simpleftp.util.ListResponse;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -45,8 +42,8 @@ public class FTPTest {
     @Test
     public void listTest() throws Exception {
         try (Client client = new Client()) {
-            List<DirectoryItem> directoryItems = Arrays.asList(client.executeList(TEST_FOLDER));
-            assertEquals(3, directoryItems.size());
+            List<ListResponse.DirectoryItem> directoryItems = client.executeList(TEST_FOLDER);
+            assertEquals(4, directoryItems.size());
             final String folderA = new File(TEST_FOLDER + "a").getCanonicalPath();
             final String folderB = new File(TEST_FOLDER + "b").getCanonicalPath();
             final String textC = new File(TEST_FOLDER + "c.txt").getCanonicalPath();
@@ -54,17 +51,17 @@ public class FTPTest {
             final String folderB1InFolderB = new File(TEST_FOLDER + "b/b1").getCanonicalPath();
 
 
-            assertEquals(3, directoryItems.size());
+            assertEquals(4, directoryItems.size());
             assertTrue(directoryItems.contains(new DirectoryItem(folderA, true)));
             assertTrue(directoryItems.contains(new DirectoryItem(folderB, true)));
             assertTrue(directoryItems.contains(new DirectoryItem(textC, false)));
 
-            directoryItems = Arrays.asList(client.executeList(folderA));
-            assertEquals(1, directoryItems.size());
+            directoryItems = client.executeList(folderA);
+            assertEquals(2, directoryItems.size());
             assertTrue(directoryItems.contains(new DirectoryItem(textAInFolderA, false)));
 
-            directoryItems = Arrays.asList(client.executeList(folderB));
-            assertEquals(1, directoryItems.size());
+            directoryItems = client.executeList(folderB);
+            assertEquals(2, directoryItems.size());
             assertTrue(directoryItems.contains(new DirectoryItem(folderB1InFolderB, true)));
         }
     }
@@ -74,12 +71,16 @@ public class FTPTest {
         try (Client client = new Client()) {
             final String textAInFolderA = new File(TEST_FOLDER + "a/a.txt").getCanonicalPath();
             final String textC = new File(TEST_FOLDER + "c.txt").getCanonicalPath();
+            final String destinationAInFolderA = "a.txt";
+            final String destinationC = "c.txt";
 
-            String fileContentA = client.executeGet(textAInFolderA);
-            assertEquals(getFileContent(textAInFolderA), fileContentA);
+            client.executeGet(textAInFolderA, destinationAInFolderA);
+            assertEquals(getFileContent(textAInFolderA), getFileContent(destinationAInFolderA));
+            Files.deleteIfExists(Paths.get(destinationAInFolderA));
 
-            String fileContentC = client.executeGet(textC);
-            assertEquals(getFileContent(textC), fileContentC);
+            client.executeGet(textC, destinationC);
+            assertEquals(getFileContent(textC), getFileContent(destinationC));
+            Files.deleteIfExists(Paths.get(destinationC));
         }
     }
 

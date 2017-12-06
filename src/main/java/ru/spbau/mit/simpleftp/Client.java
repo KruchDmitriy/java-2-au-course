@@ -1,82 +1,63 @@
 package ru.spbau.mit.simpleftp;
 
+import ru.spbau.mit.simpleftp.util.*;
+
 import java.io.*;
 import java.net.Socket;
+import java.util.List;
 
 public class Client implements AutoCloseable {
-    public static final String DEFAULT_HOST = "127.0.0.1";
-    public static final int DEFAULT_PORT = Server.DEFAULT_PORT;
+    private static final FTPConfig CONFIG = new FTPConfig();
     private final Socket socket;
-    private final DataInputStream inputStream;
-    private final DataOutputStream outputStream;
+    private final ObjectInputStream inputStream;
+    private final ObjectOutputStream outputStream;
 
     public Client() throws IOException {
-        this(DEFAULT_HOST, DEFAULT_PORT);
+        this(CONFIG.getAddress(), CONFIG.getPort());
     }
 
     public Client(String host, int port) throws IOException {
         socket = new Socket(host, port);
-        inputStream = new DataInputStream(socket.getInputStream());
-        outputStream = new DataOutputStream(socket.getOutputStream());
+        outputStream = new ObjectOutputStream(socket.getOutputStream());
+        outputStream.flush();
+        inputStream = new ObjectInputStream(socket.getInputStream());
     }
 
-    public DirectoryItem[] executeList(String fileName) throws IOException, InterruptedException {
-        outputStream.writeInt(Command.List.id);
-        outputStream.writeUTF(fileName);
+    public List<ListResponse.DirectoryItem> executeList(String pathToDirectory)
+            throws Exception {
+        Query query = new ListQuery(pathToDirectory);
+        outputStream.writeObject(query);
+        Response response = (Response) inputStream.readObject();
 
-        final int length = inputStream.readInt();
-        DirectoryItem[] files = new DirectoryItem[length];
+        handleError(response);
 
-        for (int i = 0; i < length; i++) {
-            String file = inputStream.readUTF();
-            boolean isDirectory = inputStream.readBoolean();
-            files[i] = new DirectoryItem(file, isDirectory);
-        }
-
-        return files;
+        return ((ListResponse) response).directoryItems;
     }
 
-    public String executeGet(String fileName) throws IOException {
-        outputStream.writeInt(Command.Get.id);
-        outputStream.writeUTF(fileName);
+    public void executeGet(String pathToFile, String destinationPath)
+            throws Exception {
+        Query query = new GetQuery(pathToFile, destinationPath);
+        outputStream.writeObject(query);
+        Response response = (Response) inputStream.readObject();
+        handleError(response);
+    }
 
-        StringBuilder builder = new StringBuilder();
-        long length = inputStream.readLong();
-        byte[] bytes = new byte[256];
-        for (int counter = 0, read; counter < length; counter += read) {
-            read = inputStream.read(bytes);
-            builder.append(new String(bytes, 0, read));
-        }
-
-        return builder.toString();
+    public void executeClose() throws IOException {
+        outputStream.writeObject(new CloseQuery());
     }
 
     @Override
     public void close() throws Exception {
-        outputStream.writeInt(Command.Shutdown.id);
+        executeClose();
 
         if (!socket.isClosed()) {
             socket.close();
         }
     }
 
-    public static class DirectoryItem {
-        public final String fileName;
-        public final boolean isDirectory;
-
-        public DirectoryItem(String fileName, boolean isDirectory) {
-            this.fileName = fileName;
-            this.isDirectory = isDirectory;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (! (obj instanceof DirectoryItem)) {
-                return false;
-            }
-            DirectoryItem item = (DirectoryItem) obj;
-
-            return fileName.equals(item.fileName) && isDirectory == item.isDirectory;
+    private static void handleError(Response response) throws Exception {
+        if (response instanceof ErrorResponse) {
+            throw new Exception(((ErrorResponse) response).message);
         }
     }
 }

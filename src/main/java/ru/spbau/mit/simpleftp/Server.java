@@ -1,25 +1,34 @@
 package ru.spbau.mit.simpleftp;
 
-import java.io.*;
+import ru.spbau.mit.simpleftp.util.*;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import static java.lang.Thread.activeCount;
 
 public class Server {
-    public static final int DEFAULT_PORT = 57890;
+    private static final FTPConfig CONFIG = new FTPConfig();
     private final ServerSocket serverSocket;
     private final ExecutorService executorService =
             Executors.newFixedThreadPool(activeCount());
     private Thread mainThread;
+    private final AtomicBoolean stopServer = new AtomicBoolean();
 
     public Server() throws IOException {
-        this(DEFAULT_PORT);
+        this(CONFIG.getPort());
     }
 
     public Server(int port) throws IOException {
@@ -32,12 +41,16 @@ public class Server {
         }
 
         mainThread = new Thread(() -> {
-            while (true) {
+            while (!stopServer.get()) {
                 try {
                     Socket clientSocket = serverSocket.accept();
                     executorService.submit(new Task(clientSocket));
-                } catch (IOException ignored) {
-                    return;
+                } catch (IOException e) {
+                    if (e instanceof SocketException
+                            && e.getMessage().equals("Socket closed")) {
+                        return;
+                    }
+                    e.printStackTrace();
                 }
             }
         });
@@ -49,48 +62,41 @@ public class Server {
             throw new ServerAlreadyStopped();
         }
 
-        try {
-            serverSocket.close();
-        } catch (IOException ignored) { }
-    }
-
-    private static void get(DataOutputStream outputStream, String fileName) throws IOException {
-        final File file = new File(fileName);
-        outputStream.writeLong(file.length());
-
-        try (FileInputStream fileInputStream = new FileInputStream(file)) {
-            byte[] bytes = new byte[256];
-            int readed;
-            while ((readed = fileInputStream.read(bytes)) > 0) {
-                outputStream.write(bytes, 0, readed);
+        if (!serverSocket.isClosed()) {
+            try {
+                stopServer.set(true);
+                serverSocket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }
     }
 
-    private static void list(DataOutputStream outputStream, String fileName) throws IOException {
-        final IOException[] wasThrown = { null };
-        String[] fileNames = new File(fileName).list();
-
-        if (fileNames == null) {
-            outputStream.writeInt(0);
-            return;
+    private static Response processQuery(Query query) throws IOException {
+        if (query instanceof ListQuery) {
+            return list((ListQuery) query);
         }
 
-        outputStream.writeInt(fileNames.length);
-        Arrays.stream(fileNames)
-            .forEach(curFileName -> {
-                try {
-                    File file = new File(fileName + File.separator + curFileName);
-                    outputStream.writeUTF(file.getCanonicalPath());
-                    outputStream.writeBoolean(file.isDirectory());
-                } catch (IOException e) {
-                    wasThrown[0] = e;
-                }
-            });
-
-        if (wasThrown[0] != null) {
-            throw wasThrown[0];
+        if (query instanceof GetQuery) {
+            return get((GetQuery) query);
         }
+
+        return new ErrorResponse("Server error: Unknown query type");
+    }
+
+    private static GetResponse get(GetQuery query) throws IOException {
+        return new GetResponse(new File(query.pathToFile), query.destinationPath);
+    }
+
+    private static ListResponse list(ListQuery query) throws IOException {
+        List<ListResponse.DirectoryItem> directoryItems =
+                Files.walk(Paths.get(query.pathToDirectory), 1)
+                .map(path -> new ListResponse.DirectoryItem(
+                        path.toAbsolutePath().normalize().toString(),
+                        Files.isDirectory(path)
+                ))
+                .collect(Collectors.toList());
+        return new ListResponse(directoryItems);
     }
 
     public boolean isStopped() {
@@ -106,22 +112,24 @@ public class Server {
 
         @Override
         public void run() {
-            try (DataInputStream inputStream = new DataInputStream(socket.getInputStream());
-                 DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream()))
-            {
+            try {
+                ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+                ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
                 while (true) {
-                    switch (Command.createCommand(inputStream.readInt())) {
-                        case Get:
-                            get(outputStream, inputStream.readUTF());
-                            break;
-                        case List:
-                            list(outputStream, inputStream.readUTF());
-                            break;
-                        case Shutdown:
+                    try {
+                        Query query = (Query) in.readObject();
+
+                        if (query instanceof CloseQuery) {
                             return;
+                        }
+
+                        Response response = processQuery(query);
+                        out.writeObject(response);
+                    } catch (IOException e) {
+                        out.writeObject(new ErrorResponse("Error while processing query"));
                     }
                 }
-            } catch (IOException e) {
+            } catch (ClassNotFoundException | IOException e) {
                 e.printStackTrace();
             }
         }
