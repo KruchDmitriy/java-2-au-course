@@ -1,10 +1,14 @@
 package ru.spbau.mit.torrent.util;
 
+import ru.spbau.mit.torrent.io.response.ErrorResponse;
+import ru.spbau.mit.torrent.io.response.GetResponse;
+import ru.spbau.mit.torrent.io.response.Response;
+
 import java.io.*;
 import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
+
+import static ru.spbau.mit.torrent.util.Config.STD_PART_SIZE;
 
 public class PartedFile implements Serializable {
     private static final String PART_EXT = ".part";
@@ -14,28 +18,68 @@ public class PartedFile implements Serializable {
     private RandomAccessFile file;
     private long size;
     private RandomAccessFile availablePartsFile;
-    private Set<Integer> availableParts = new HashSet<>();
+    private Map<Integer, Part> availableParts =
+            Collections.synchronizedMap(new HashMap<>());
 
-    public PartedFile(int id, String path, String mode) throws IOException {
+    public PartedFile(int id, String path) throws IOException {
         this.id = id;
         this.path = path;
-        processFileEnvironment(mode);
+        createFileEnvironment("r");
     }
 
-    private void processFileEnvironment(String mode) throws IOException {
+    public PartedFile(int id, String path, long size) throws IOException {
+        this.id = id;
+        this.path = path;
+        this.size = size;
+        createFileEnvironment("rw");
+    }
+
+    private void createFileEnvironment(String mode) throws IOException {
         name = Paths.get(path).getName(0).toString();
         file = new RandomAccessFile(path, mode);
-        size = file.length();
+        if (mode.equals("r")) {
+            size = file.length();
+        }
+
+        final File file = new File(path + PART_EXT);
+        if (!file.exists() && mode.equals("r")) {
+            createPartFile(path);
+        }
 
         availablePartsFile = new RandomAccessFile(path + PART_EXT, mode);
-        availablePartsFile.seek(0);
+
         if (mode.equals("r")) {
             for (int i = 0; i < getNumParts(); i++) {
                 if (availablePartsFile.readBoolean()) {
-                    availableParts.add(i);
+                    availableParts.put(i, new Part(i));
                 }
             }
         }
+    }
+
+    private void createPartFile(String fileName) {
+        try (DataOutputStream out = new DataOutputStream(
+                new FileOutputStream(fileName + PART_EXT))) {
+            for (int i = 0; i < getNumParts(); i++) {
+                out.writeBoolean(true);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj instanceof PartedFile) {
+            return this.id == ((PartedFile) obj).getId();
+        }
+
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return getId();
     }
 
     public int getId() {
@@ -54,22 +98,54 @@ public class PartedFile implements Serializable {
         return availableParts.size();
     }
 
-    public Part getPart(int id) throws IOException {
-        return new Part(id);
+    public Response sendPart(int partId) {
+        if (!availableParts.containsKey(partId)) {
+            return new ErrorResponse("Trying to send unavailable part.");
+        }
+
+        return availableParts.get(partId).createResponse();
+    }
+
+    public void receivePart(int partId, GetResponse response)
+            throws IOException, ClassNotFoundException {
+        if (availableParts.containsKey(partId)) {
+            throw new PartAlreadyReceivedException();
+        }
+
+        final Part part = new Part(partId, response);
+        availableParts.put(partId, part);
     }
 
     public int getNumParts() {
-        return (int) ((size + Part.STD_PART_SIZE - 1) / Part.STD_PART_SIZE);
+        return (int) ((size + STD_PART_SIZE - 1) / STD_PART_SIZE);
     }
 
-    public class Part implements Serializable {
-        public static final int STD_PART_SIZE = 8192;
+    public boolean containPart(int partId) {
+        return availableParts.containsKey(partId);
+    }
+
+    public boolean containAllParts() {
+        return availableParts.size() == getNumParts();
+    }
+
+    public List<Integer> getAvailableParts() {
+        return new ArrayList<>(availableParts.keySet());
+    }
+
+    private class Part {
         private int id;
         private int size;
         private byte[] data = new byte[STD_PART_SIZE];
 
-        public Part(int id) throws IOException {
+        private Part(int id) {
             this.id = id;
+        }
+
+        private Part(int id, GetResponse response) throws IOException {
+            this.id = id;
+            size = response.size;
+            data = response.data;
+            writeToDisk();
         }
 
         public int getSize() {
@@ -77,51 +153,59 @@ public class PartedFile implements Serializable {
         }
 
         public boolean isAvailable() throws IOException {
-            availablePartsFile.seek(id);
-            return availablePartsFile.readBoolean();
+            synchronized (PartedFile.this) {
+                availablePartsFile.seek(id);
+                return availablePartsFile.readBoolean();
+            }
         }
 
-        private void readPart() throws IOException {
-            if (!isAvailable()) {
-                throw new UnavailablePartException("part " + id
-                        + " failed to load, unavailable on client");
+        private void readFromDisk() throws IOException {
+            synchronized (PartedFile.this) {
+                if (!isAvailable()) {
+                    throw new UnavailablePartException("Part " + id
+                            + " failed to load, unavailable on client");
+                }
+
+                file.seek(getPartOffset());
+                size = file.read(data, 0, STD_PART_SIZE);
+            }
+        }
+
+        private void writeToDisk() throws IOException {
+            synchronized (PartedFile.this) {
+                file.seek(getPartOffset());
+                file.write(data, 0, size);
+
+                availablePartsFile.seek(getPartOffset());
+                availablePartsFile.writeBoolean(true);
+            }
+        }
+
+        private Response createResponse() {
+            try {
+                readFromDisk();
+            } catch (IOException e) {
+                return new ErrorResponse("Error while reading file", e);
+            }
+            return new GetResponse(size, data);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof Part) {
+                return id == ((Part) obj).id;
             }
 
-            file.seek(getPartOffset());
-            size = file.read(data, 0, STD_PART_SIZE);
+            return false;
         }
 
-        private void writePart() throws IOException {
-            file.seek(getPartOffset());
-            file.write(data, 0, size);
-
-            availablePartsFile.seek(getPartOffset());
-            availablePartsFile.writeBoolean(true);
+        @Override
+        public int hashCode() {
+            return id;
         }
 
         private long getPartOffset() {
             return STD_PART_SIZE * id;
-        }
-
-        private void writeObject(ObjectOutputStream out)
-                throws IOException {
-            readPart();
-            out.writeInt(size);
-            out.write(data, 0, size);
-        }
-
-        private void readObject(ObjectInputStream in)
-                throws IOException, ClassNotFoundException {
-            size = in.readInt();
-            in.read(data, 0, size);
-            availableParts.add(id);
-            writePart();
-        }
-
-        private void readObjectNoData()
-                throws ObjectStreamException {
-            size = 0;
-            Arrays.fill(data, (byte) 0);
         }
     }
 
@@ -129,12 +213,13 @@ public class PartedFile implements Serializable {
             throws IOException {
         out.writeUTF(path);
         out.writeInt(id);
+        out.flush();
     }
 
     private void readObject(ObjectInputStream in)
             throws IOException, ClassNotFoundException {
         path = in.readUTF();
         id = in.readInt();
-        processFileEnvironment("rw");
+        createFileEnvironment("rw");
     }
 }

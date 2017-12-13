@@ -1,11 +1,11 @@
 package ru.spbau.mit.torrent.io.response;
 
-import java.util.Set;
+import java.util.List;
 
 public class StatResponse implements Response {
-    private Set<Integer> availableParts;
+    public final List<Integer> availableParts;
 
-    public StatResponse(Set<Integer> availableParts) {
+    public StatResponse(List<Integer> availableParts) {
         this.availableParts = availableParts;
     }
 }

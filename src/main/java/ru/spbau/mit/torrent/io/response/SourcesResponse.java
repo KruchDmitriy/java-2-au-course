@@ -5,9 +5,9 @@ import ru.spbau.mit.torrent.util.Source;
 import java.util.List;
 
 public class SourcesResponse implements Response {
-    public final List<Source> listSoucres;
+    public final List<Source> listSources;
 
     public SourcesResponse(List<Source> listSources) {
-        this.listSoucres = listSources;
+        this.listSources = listSources;
     }
 }

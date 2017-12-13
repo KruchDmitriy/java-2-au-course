@@ -1,14 +1,20 @@
 package ru.spbau.mit.torrent.util;
 
+import java.io.IOException;
 import java.io.Serializable;
+import java.net.Socket;
 
 public class Source implements Comparable<Source>, Serializable {
     public final IP ip;
-    public final short port;
+    public final int port;
 
-    public Source(IP ip, short port) {
+    public Source(IP ip, int port) {
         this.ip = ip;
         this.port = port;
+    }
+
+    public Socket createSocket() throws IOException {
+        return new Socket(ip.toString(), port);
     }
 
     @Override
@@ -30,6 +36,11 @@ public class Source implements Comparable<Source>, Serializable {
         return port - o.port;
     }
 
+    @Override
+    public String toString() {
+        return ip.toString() + ":" + port;
+    }
+
     public static class IP implements Comparable<IP>, Serializable {
         private byte[] data = new byte[4];
         public IP(byte b0, byte b1, byte b2, byte b3) {
@@ -41,6 +52,14 @@ public class Source implements Comparable<Source>, Serializable {
 
         public IP(byte[] data) {
             System.arraycopy(data, 0, this.data, 0, 4);
+        }
+
+        public IP(String ip) {
+            String[] bytes = ip.split("\\.");
+            data[0] = Byte.parseByte(bytes[0]);
+            data[1] = Byte.parseByte(bytes[1]);
+            data[2] = Byte.parseByte(bytes[2]);
+            data[3] = Byte.parseByte(bytes[3]);
         }
 
         @Override
