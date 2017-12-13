@@ -45,11 +45,11 @@
     <!-- See http://checkstyle.sf.net/config_javadoc.html#JavadocPackage -->
     <!--<module name="JavadocPackage"/>-->
 
-    <!-- Checks whether files end with a new line.                        -->
+    <!-- Checks whether filesInfo end with a new line.                        -->
     <!-- See http://checkstyle.sf.net/config_misc.html#NewlineAtEndOfFile -->
     <module name="NewlineAtEndOfFile"/>
 
-    <!-- Checks that property files contain the same keys.         -->
+    <!-- Checks that property filesInfo contain the same keys.         -->
     <!-- See http://checkstyle.sf.net/config_misc.html#Translation -->
     <module name="Translation"/>
 
